@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Fearner Ad Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding-top: 100px;
+      background-color: #f9f9f9;
+    }
+    h1 {
+      color: #333;
+    }
+    p {
+      font-size: 18px;
+      color: #555;
+    }
+  </style>
+  <script>
+    // Delay showing ad for 15 seconds
+    setTimeout(() => {
+      if (typeof window.propelAd !== 'undefined') {
+        window.propelAd.showInterstitial();
+      }
+    }, 15000);
+  </script>
+</head>
+<body>
+  <h1>Welcome to Fearner</h1>
+  <p>This is a test page for interstitial ad display.</p>
+  <p>The ad will appear after 15 seconds.</p>
+
+  <!-- Propeller Interstitial JS (Insert after approval) -->
+  <script async data-cfasync="false" src="https://upgulpinon.com/1?z=YOUR_AD_UNIT_ID"></script>
+</body>
+</html>
