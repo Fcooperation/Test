@@ -1,160 +1,103 @@
-import fs from 'fs';
 import axios from 'axios';
-import * as cheerio from 'cheerio';
-import robotsParser from 'robots-parser';
-import { nanoid } from 'nanoid';
+import cheerio from 'cheerio';
 import { createClient } from '@supabase/supabase-js';
-import { URL } from 'url';
+import { nanoid } from 'nanoid';
+import robotsParser from 'robots-parser';
 
-// 📌 Supabase credentials
-const supabaseUrl = 'https://pwsxezhugsxosbwhkdvf.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB3c3hlemh1Z3N4b3Nid2hrZHZmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE5MjgzODcsImV4cCI6MjA2NzUwNDM4N30.T170FX8tC5iZEmdzyY_NjuFQDZ9_7GxxVSrVLzhvnQ0';
-const supabase = createClient(supabaseUrl, supabaseKey);
+// =============== CONFIG ================
+const SUPABASE_URL = 'https://pwsxezhugsxosbwhkdvf.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB3c3hlemh1Z3N4b3Nid2hrZHZmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE5MjgzODcsImV4cCI6MjA2NzUwNDM4N30.T170FX8tC5iZEmdzyY_NjuFQDZ9_7GxxVSrVLzhvnQ0';
+const client = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// 🌍 Start URLs
-const SITES = [
-  'https://archive.org/',
-  'https://en.wikipedia.org/',
-  'https://openlibrary.org/',
-  'https://www.nature.com/',
-  'https://www.britannica.com/',
-  'https://gutenberg.org/',
-  'https://pubmed.ncbi.nlm.nih.gov/',
-  'https://www.researchgate.net/',
-  'https://www.sciencedirect.com/',
-  'https://www.hindawi.com/'
-];
+const START_URL = 'https://archive.org/';
+const MAX_PAGES = 10;
+const CRAWLER_NAME = 'fcrawler';
+const visited = new Set();
 
-// 🧠 Token estimate
-function countTokens(text) {
-  return Math.ceil(text.length / 4);
-}
-
-// 🕑 Sleep
+// =============== UTILS ================
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// 📋 Extract training content
-function extractTrainingData(html) {
-  const $ = cheerio.load(html);
-  const title = $('title').text().trim();
-  let bodyText = '';
-  $('p').each((_, el) => {
-    const txt = $(el).text().trim();
-    if (txt.length > 50) bodyText += txt + '\n';
-  });
-  return { title, content: bodyText.trim().slice(0, 5000) };
-}
-
-// 📤 Upload training data
-async function uploadToSupabase(data) {
-  try {
-    await supabase.from('fai_training').insert([data]).throwOnError();
-    console.log(`📤 Uploaded: ${data.url}`);
-    return true;
-  } catch (err) {
-    console.error('❌ Upload error:', err.message || err);
-    return false;
-  }
-}
-
-// 🧱 Ensure table exists (or guide)
-async function ensureTable() {
-  console.log('⚙️ Ensuring Supabase table...');
-  const { error } = await supabase.from('fai_training').select('id').limit(1);
-  if (!error) {
-    console.log('✅ Table exists');
-  } else {
-    console.warn('⚠️ Table not found. Please create it manually in Supabase SQL editor:');
-    console.warn(`
-CREATE TABLE public.fai_training (
-  id TEXT PRIMARY KEY,
-  url TEXT UNIQUE,
-  title TEXT,
-  content TEXT,
-  tokens INT,
-  timestamp TIMESTAMPTZ
-);`);
-  }
-}
-
-// 🤖 Get robots.txt and crawl delay
-async function getRobots(url) {
+async function getRobotsData(url) {
   try {
     const robotsUrl = new URL('/robots.txt', url).href;
     const res = await axios.get(robotsUrl);
-    const parser = robotsParser(robotsUrl, res.data);
-    const delay = parser.getCrawlDelay('fcrawler') || 2000;
-    return { parser, delay };
+    const robots = robotsParser(robotsUrl, res.data);
+    return { parser: robots, delay: robots.getCrawlDelay(CRAWLER_NAME) || 2000 };
   } catch {
     return { parser: { isAllowed: () => true }, delay: 2000 };
   }
 }
 
-// 🔍 Crawl one page
-const visited = new Set();
-async function crawl(url, robots, delay, pageCount = { count: 0 }, maxPages = 10) {
-  if (visited.has(url) || pageCount.count >= maxPages) return;
-  if (!robots.parser.isAllowed(url, 'fcrawler')) return;
+async function ensureTable() {
+  try {
+    await client.from('fai_training').select('id').limit(1);
+    console.log('✅ Table found or already exists');
+  } catch (err) {
+    console.warn('⚠️ Could not ensure table. It may already exist or need manual creation.');
+  }
+}
+
+// =============== MAIN CRAWL ================
+async function crawlPage(url, robots, delay, count = { total: 0 }) {
+  if (visited.has(url) || count.total >= MAX_PAGES) return;
+  if (!robots.parser.isAllowed(url, CRAWLER_NAME)) return;
 
   visited.add(url);
-  pageCount.count++;
+  count.total++;
   console.log(`🔍 Crawling: ${url}`);
 
   try {
     const res = await axios.get(url, { timeout: 10000 });
-    const { title, content } = extractTrainingData(res.data);
-    const tokens = countTokens(content);
+    const $ = cheerio.load(res.data, { decodeEntities: false });
 
-    if (tokens < 100) {
+    const title = $('title').text().trim().slice(0, 200) || 'Untitled';
+    const bodyText = $('body').text().trim().replace(/\s+/g, ' ');
+    if (bodyText.length < 100) {
       console.log(`⚠️ Skipped (weak content): ${url}`);
       return;
     }
 
-    const entry = {
-      id: nanoid(),
-      url,
-      title,
-      content,
-      tokens,
-      timestamp: new Date().toISOString()
-    };
+    const content = bodyText.slice(0, 100000); // Limit long text
+    const tokens = content.split(/\s+/).length;
 
-    await uploadToSupabase(entry);
+    const { error } = await client.from('fai_training').insert([
+      {
+        id: nanoid(),
+        url,
+        title,
+        content,
+        tokens,
+        timestamp: new Date().toISOString()
+      }
+    ]);
 
-    // Follow more links
-    const $ = cheerio.load(res.data);
+    if (error) {
+      console.error(`❌ Upload error: ${error.message}`);
+    } else {
+      console.log(`📤 Uploaded: ${title}`);
+    }
+
     const links = $('a[href]')
       .map((_, el) => $(el).attr('href'))
       .get()
-      .map(href => {
-        try {
-          return new URL(href, url).href;
-        } catch {
-          return null;
-        }
-      })
-      .filter(href => href && href.startsWith('http'));
+      .map(link => new URL(link, url).href)
+      .filter(href => href.startsWith('http'));
 
     for (const link of links) {
       await sleep(delay);
-      await crawl(link, robots, delay, pageCount, maxPages);
+      await crawlPage(link, robots, delay, count);
     }
-
   } catch (err) {
     console.warn(`❌ Failed: ${url} – ${err.message}`);
   }
 }
 
-// 🚀 Main
-async function run() {
+// =============== AUTO RUN ================
+(async () => {
   console.log('🚀 crawlerA starting...');
   await ensureTable();
-  for (const site of SITES) {
-    const robots = await getRobots(site);
-    await crawl(site, robots, robots.delay);
-  }
-}
-
-run(); // 👈 Runs on its own
+  const robots = await getRobotsData(START_URL);
+  await crawlPage(START_URL, robots, robots.delay);
+})();
