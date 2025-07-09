@@ -1,0 +1,16 @@
+{
+  "name": "crawler-a",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "crawlerA.js",
+  "scripts": {
+    "start": "node crawlerA.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "cheerio": "^1.0.0-rc.12",
+    "robots-parser": "^3.3.1",
+    "@supabase/supabase-js": "^2.39.5",
+    "nanoid": "^4.0.2"
+  }
+}
