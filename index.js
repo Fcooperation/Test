@@ -30,7 +30,7 @@ function countTokens(text) {
   return Math.ceil(text.length / 4);
 }
 
-// 🕑 Sleep helper
+// 🕑 Sleep
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -47,14 +47,21 @@ function extractTrainingData(html) {
   return { title, content: bodyText.trim().slice(0, 5000) };
 }
 
-// 📤 Upload to Supabase with conflict handling
+// 📤 Upload training data with duplicate check
 async function uploadToSupabase(data) {
   try {
-    await supabase
+    const { data: existing } = await supabase
       .from('fai_training')
-      .insert([data], { onConflict: 'url' })  // ✅ skip duplicate URLs silently
-      .throwOnError();
+      .select('id')
+      .eq('url', data.url)
+      .limit(1);
 
+    if (existing.length > 0) {
+      console.log(`⚠️ Duplicate found, skipping: ${data.url}`);
+      return false;
+    }
+
+    await supabase.from('fai_training').insert([data]).throwOnError();
     console.log(`📤 Uploaded: ${data.url}`);
     return true;
   } catch (err) {
@@ -63,7 +70,7 @@ async function uploadToSupabase(data) {
   }
 }
 
-// ⚙️ Ensure table exists
+// 🧱 Ensure table exists (or guide)
 async function ensureTable() {
   console.log('⚙️ Ensuring Supabase table...');
   const { error } = await supabase.from('fai_training').select('id').limit(1);
@@ -83,7 +90,7 @@ CREATE TABLE public.fai_training (
   }
 }
 
-// 🔍 Robots.txt + crawl delay
+// 🤖 Get robots.txt and crawl delay
 async function getRobots(url) {
   try {
     const robotsUrl = new URL('/robots.txt', url).href;
@@ -96,7 +103,7 @@ async function getRobots(url) {
   }
 }
 
-// 🤖 Crawl logic
+// 🔍 Crawl one page
 const visited = new Set();
 async function crawl(url, robots, delay, pageCount = { count: 0 }, maxPages = 10) {
   if (visited.has(url) || pageCount.count >= maxPages) return;
@@ -127,7 +134,7 @@ async function crawl(url, robots, delay, pageCount = { count: 0 }, maxPages = 10
 
     await uploadToSupabase(entry);
 
-    // 📎 Follow more links
+    // Follow more links
     const $ = cheerio.load(res.data);
     const links = $('a[href]')
       .map((_, el) => $(el).attr('href'))
@@ -151,7 +158,7 @@ async function crawl(url, robots, delay, pageCount = { count: 0 }, maxPages = 10
   }
 }
 
-// 🚀 Auto-run
+// 🚀 Main
 async function run() {
   console.log('🚀 crawlerA starting...');
   await ensureTable();
@@ -161,4 +168,4 @@ async function run() {
   }
 }
 
-run(); // ✅ Runs immediately
+run(); // 👈 Runs automatically
